@@ -27,3 +27,67 @@ An advanced, privacy-first desktop voice dictation engine built to provide a pow
                               └──> Stage 2: Resilient LLM Pool (Pristine Text)
                                        ├──> Auto-Inject at Active Cursor
                                        └──> Local SQLite History Logging
+
+GUI Framework: customtkinter (Modernized dark-mode engine).
+
+Audio Pipeline: sounddevice + wavio + numpy (High-performance callback streaming tracking 16-bit PCM).
+
+Global Inputs: keyboard hook engine capturing asynchronous desktop hotkeys flawlessly.
+
+Local Storage: sqlite3 for local transactional application history caching
+
+📂 Repository Layout
+main.py: The main entry point that initializes and launches the desktop application GUI.
+
+gui_app.py: Houses the CustomTkinter dark-mode user interface, status animation routines, settings panel management, and background threads.
+
+ai_brain.py: Manages the two-stage cloud translation pipeline and resilience logic across the fallback Groq model configurations.
+
+audio_recorder.py: Handles high-fidelity microphone input capture streaming utilizing hardware-specific audio device indexing.
+
+history_vault.py: Establishes connections to the local SQLite storage engine to manage chronological transcript histories.
+
+Launch_LocalFlow.bat: A silent launcher script that auto-elevates privileges to run the application headless using Windows pythonw.
+
+requirements.txt: Outlines the clear upstream package dependencies required to set up the execution environment.
+
+⚙️ Installation & Usage
+Prerequisites
+Python 3.10 or higher installed.
+
+An active Groq API Key (Secure one at the Groq Console).
+
+Setup Steps
+Clone the repository to your local computer path:
+git clone [https://github.com/sarawgiapoorv/LocalFlow.git](https://github.com/sarawgiapoorv/LocalFlow.git)
+cd LocalFlow
+Install the necessary system dependencies:
+pip install -r requirements.txt
+Run the Application:
+To launch via a standard interactive terminal:
+python main.py
+To run silently in the background with no terminal window active:
+Launch_LocalFlow.bat
+Configure your credentials:
+Expand the UI Settings panel, supply your preferred microphone input device index, input your Groq API Key (gsk_...), and press Apply Settings.
+
+⌨️ Shortcuts Reference Guide
+1) Hold Right Alt  ---->>Active Dictation---->>Turns status bar indicator red and runs active microphone capture stream.
+2)Release Right Alt	---->>Stop & Transmit---->>Halts capture stream, packs the audio payload, triggers the AI pipeline, and types at the active cursor.
+3)Ctrl + Shift + A---->>Continuous Toggle---->>Switches the application engine into an active, hands-free continuous dictation loop.
+
+🔒 Security & Privacy Commitments
+Your private API access credentials are saved locally onto your physical storage drive inside an automated local config.txt file.
+
+The bundled .gitignore file is explicitly pre-configured to ensure your private configuration keys (config.txt) and transactional database caches (*.db) are never committed or exposed upstream to public version control.
+
+🧑‍💻 Developer
+Developed with ⚡ by Apoorv Sarawgi
+
+Role: Aspiring AI/ML Engineer & Generative AI Developer
+
+LinkedIn: apoorv-sarawgi
+
+Medium Articles: Read Tech Articles
+
+
