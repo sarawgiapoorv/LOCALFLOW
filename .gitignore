@@ -1,0 +1,4 @@
+config.txt
+*.db
+__pycache__/
+.vs/
