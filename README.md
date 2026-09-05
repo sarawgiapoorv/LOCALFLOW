@@ -1,93 +1,118 @@
-# ⚡ LocalFlow
+# LocalFlow v9.5 🎙️
 
-An advanced, privacy-first desktop voice dictation engine built to provide a powerful, open-source replacement for tools like **Flow** and **Whisper**. LocalFlow captures raw microphone streams, executes real-time cloud transcriptions, and passes them through a resilient multi-model LLM pool to strip filler words, fix grammar, and process spoken self-corrections instantly before injecting the text directly at your cursor.
+**The Ultimate Speech-to-Mind Voice Dictation Engine for Windows.**
 
----
-
-## ✨ Core Features
-
-* **Two-Stage Core AI Pipeline:**
-    * **Stage 1 (Transcription):** Blazing fast audio-to-text decoding via Groq's `whisper-large-v3` cloud endpoint.
-    * **Stage 2 (Polishing):** Context-aware text refinement utilizing deep LLM instructions to eliminate conversational stutter, remove filler phrases (`um`, `uh`, `basically`), and resolve complex verbal backtracking on-the-fly.
-* **Resilient Model Failover Pool:** Implements a multi-model fallback safety system. If the default `llama-3.3-70b-versatile` endpoint fails or times out, the application sequentially hot-swaps to `llama-3.1-70b-versatile`, `llama3-70b-8192`, or `mixtral-8x7b-32768` to guarantee zero dictation dropouts.
-* **Dual-Mode Recording Controls:**
-    * **Hold-to-Record:** Hold down the `Right Alt` key to capture audio, and release it to instantly process and type your text.
-    * **Hands-Free Continuous Mode:** Press `Ctrl + Shift + A` to toggle a long-form session. Speak completely hands-free and press the shortcut again to process blocks of narrative dictation.
-* **Seamless Cursor Injection:** Automatically pushes finalized, polished prose into whatever text editor, IDE, or browser field you are currently focused on.
-* **Persistent SQLite History Vault:** Locally logs every text generation with accurate timestamps into `localflow_history.db` so you never lose an optimized thought.
-* **Production-Grade UI/UX:** Built on a sleek, Tailwind-inspired custom dark theme featuring live color-pulsing record animations and minimized close-to-tray system integration via `pystray`.
+LocalFlow is a state-of-the-art, context-aware dictation copilot engineered to match and exceed Wispr Flow. Built natively for Windows, it marries ultra-low-latency local ASR (`faster-whisper`) with Gemini cloud intelligence (`gemini-2.5-flash`) and a zero-touch local LLM fallback (`llama3.2:3b` via Ollama) to deliver real-time, speech-to-mind transcription that automatically repairs speech slips, self-corrections, and hesitations with zero friction.
 
 ---
 
-## 🏗️ Architecture & Technical Stack
+## 🌟 Key Features
 
-```text
-[Microphone] ──> SoundDevice Stream (16kHz Mono PCM)
-                     └──> Stage 1: Groq Whisper API (Raw Text)
-                              └──> Stage 2: Resilient LLM Pool (Pristine Text)
-                                       ├──> Auto-Inject at Active Cursor
-                                       └──> Local SQLite History Logging
+### 🧠 Speech-to-Mind Intelligence & Verbal Self-Correction
+- **Intelligent Mid-Speech Self-Correction**: When you change your mind mid-sentence (e.g., *"order me a pizza from dominos no order me a pizza from pizza hut"*), LocalFlow discards the canceled thought and outputs only the final intended text (*"Order me a pizza from Pizza Hut."*).
+- **Direct Polished Injection (Zero Raw Typing)**: LocalFlow eliminates buggy "optimistic raw typing" and clipboard swapping loops. Speech is transcribed and copyedited first, then typed cleanly into your active window in a single shot.
+- **Pristine Polish & Grammar**: Automatic punctuation, capitalization, filler-word pruning (`um`, `uh`, `like`), and phonetic brand correction (Pizza Hut, Domino's, GitHub, Python, VS Code).
+- **Tone Profiles**: Switch effortlessly between **Normal**, **Formal**, **Casual**, and **Developer** modes.
+- **Generative Drafting Mode**: Speak *"draft an email..."* or *"write a PR description..."* to dynamically instruct the AI to draft high-quality content directly into your active window.
 
-GUI Framework: customtkinter (Modernized dark-mode engine).
+### ⚡ Automatic Local LLM Fallback (`llama3.2:3b`)
+- **Zero Configuration & Headless Lifecycle**: LocalFlow auto-discovers `ollama.exe` and starts the Ollama server silently in the background (`CREATE_NO_WINDOW`) without console popups or manual URL copying.
+- **RAM Pre-Warming**: Pre-loads `llama3.2:3b` weights into memory on application startup to eliminate cold-start latency.
+- **Sticky Session Circuit Breaker**: If the Gemini API hits a rate limit (HTTP 429), quota exhaustion, or network outage, LocalFlow immediately trips into Local Mode. The current sentence is instantly rescued, and subsequent dictations remain local for zero-delay continuity.
+- **Header Engine Indicator & Manual Toggle**: The UI header displays `● Cloud Polish` (Sky Blue) or `⚡ Local LLM (llama3.2:3b)` (Amber) with a 1-click `↺ Reset` button to restore cloud polish whenever you desire.
+- **Passive Transcriber Framework**: Built with turn-based few-shots and strict anti-assistant refusal guards. The model will never reply conversationally or answer questions—it transcribes verbatim what was spoken.
 
-Audio Pipeline: sounddevice + wavio + numpy (High-performance callback streaming tracking 16-bit PCM).
+### 📊 API Telemetry & Call Analytics Dashboard
+- **SQLite-Backed Telemetry**: Every API call is logged with provider slot, model, response status (`SUCCESS`, `RATE_LIMIT_429`, `TIMEOUT`, `ERROR`), and roundtrip latency in milliseconds.
+- **Live In-App Analytics**: Open the Settings drawer to view:
+  - Total API calls made & overall success rate %.
+  - Per-key breakdown for all Gemini slots and local LLM fallbacks.
+  - One-click stats clearing.
 
-Global Inputs: keyboard hook engine capturing asynchronous desktop hotkeys flawlessly.
+### 🎨 Minimalist Editorial Cream & Pure White UI
+- **Refined Minimalist Aesthetic**: Clean warm alabaster/cream (`#fbfbf8`) background with pristine white cards and deep charcoal typography.
+- **Floating Translucent Widget Mode**: Double-click the status card to toggle into a borderless, translucent floating widget that stays atop your windows with real-time waveform animations.
+- **System Tray Integration**: Minimize to tray on close, with hotkey indicators and status tooltips.
 
-Local Storage: sqlite3 for local transactional application history caching
+### 🖥️ Native Desktop & OS Integration
+- **1-Click Desktop App**: Launch with `LocalFlow.lnk` or run silently in the background with `Launch_LocalFlow.vbs` (`pythonw.exe`).
+- **Autonomous Bootstrapper (`Launch_LocalFlow.bat`)**: Automated dependency verification and graceful compile failover.
+- **DSP Noise Gating & Audio Ducking**: Real-time spectral gating (`noisereduce`) to strip fan hum and ambient noise, with per-session media ducking (`pycaw`) during recording.
+- **Enterprise Security**: Gemini API keys are securely vaulted in the native **Windows Credential Manager** via `keyring` (no plaintext configuration files).
 
-📂 Repository Layout
-main.py: The main entry point that initializes and launches the desktop application GUI.
+---
 
-gui_app.py: Houses the CustomTkinter dark-mode user interface, status animation routines, settings panel management, and background threads.
+## 🛠️ Setup & Installation
 
-ai_brain.py: Manages the two-stage cloud translation pipeline and resilience logic across the fallback Groq model configurations.
+### 1. Prerequisites
+- **Windows 10 / 11 (64-bit)**
+- **Python 3.10+**
+- *(Optional, Recommended for Offline Polish)*: [Ollama](https://ollama.com/) with `ollama pull llama3.2:3b`. LocalFlow will detect and launch it headlessly automatically.
 
-audio_recorder.py: Handles high-fidelity microphone input capture streaming utilizing hardware-specific audio device indexing.
+### 2. Zero-Touch Launch
+Double-click `Launch_LocalFlow.bat`. 
 
-history_vault.py: Establishes connections to the local SQLite storage engine to manage chronological transcript histories.
+The launcher will:
+1. Verify your Python environment.
+2. Install or upgrade dependencies from `requirements.txt`.
+3. Handle compiler dependencies gracefully.
+4. Launch the application.
 
-Launch_LocalFlow.bat: A silent launcher script that auto-elevates privileges to run the application headless using Windows pythonw.
+### 3. API Key Setup
+When prompted, enter your Google Gemini API key. You can add multiple comma-separated keys for automatic multi-key rotation. Keys are encrypted inside the Windows Credential Manager.
 
-requirements.txt: Outlines the clear upstream package dependencies required to set up the execution environment.
+---
 
-⚙️ Installation & Usage
-Prerequisites
-Python 3.10 or higher installed.
+## 🚀 Launch Options
 
-An active Groq API Key (Secure one at the Groq Console).
+1. **Standard Dashboard:** 
+   ```bash
+   python main.py
+   ```
+2. **Silent System Tray Mode:**
+   ```bash
+   python main.py --silent
+   ```
+3. **Windows Startup:**
+   Toggle **"Start LocalFlow with Windows Boot"** in Settings to run silently on boot without UAC prompts.
 
-Setup Steps
-Clone the repository to your local computer path:
-git clone [https://github.com/sarawgiapoorv/LocalFlow.git](https://github.com/sarawgiapoorv/LocalFlow.git)
-cd LocalFlow
-Install the necessary system dependencies:
-pip install -r requirements.txt
-Run the Application:
-To launch via a standard interactive terminal:
-python main.py
-To run silently in the background with no terminal window active:
-Launch_LocalFlow.bat
-Configure your credentials:
-Expand the UI Settings panel, supply your preferred microphone input device index, input your Groq API Key (gsk_...), and press Apply Settings.
+---
 
-⌨️ Shortcuts Reference Guide
-1) Hold Right Alt  ---->>Active Dictation---->>Turns status bar indicator red and runs active microphone capture stream.
-2)Release Right Alt	---->>Stop & Transmit---->>Halts capture stream, packs the audio payload, triggers the AI pipeline, and types at the active cursor.
-3)Ctrl + Shift + A---->>Continuous Toggle---->>Switches the application engine into an active, hands-free continuous dictation loop.
+## 🎙️ Hotkeys & Voice Commands
 
-🔒 Security & Privacy Commitments
-Your private API access credentials are saved locally onto your physical storage drive inside an automated local config.txt file.
+### Hotkeys
+- **Push-to-Talk:** Hold `Right Alt`, speak, and release to inject.
+- **Continuous Mode:** Press `Ctrl + Shift + A` to toggle continuous voice-activity-detected dictation.
 
-The bundled .gitignore file is explicitly pre-configured to ensure your private configuration keys (config.txt) and transactional database caches (*.db) are never committed or exposed upstream to public version control.
+### Voice Commands
+- **"scratch that"** / **"undo that"**: Natively deletes the last dictation.
+- **"make that a bulleted list"**: Formats incoming speech as a markdown list.
+- **"rewrite clipboard"**: Polishes and formats current clipboard contents.
+- **"add [word] to my dictionary"**: Trains custom vocabulary into `dictionary.json`.
+- **"draft an email..."**: Triggers Generative AI drafting mode.
 
-🧑‍💻 Developer
-Developed with ⚡ by Apoorv Sarawgi
+---
 
-Role: Aspiring AI/ML Engineer & Generative AI Developer
+## 🧪 Automated Test Suite
 
-LinkedIn: apoorv-sarawgi
+LocalFlow comes equipped with a comprehensive 14-test automated suite verifying all core subsystems:
+```bash
+python test_suite.py
+```
 
-Medium Articles: Read Tech Articles
+Tests include:
+- Vocabulary & contextual app dictionary hints
+- Snippet text expansions
+- Tone style profile mapping
+- Fast-path suffix diffing & injection normalization
+- Connection pre-warming
+- Speech-to-mind verbal self-correction
+- Multi-key API rotation
+- Swap guard & clipboard race condition defenses
+- Local LLM inference & anti-assistant prompts (`llama3.2:3b`)
+- Sticky session circuit breaker failover
+- Persistent API telemetry & analytics reporting
 
+---
 
+*LocalFlow v9.5 — Fast, Private, and Autonomous Speech-to-Mind Dictation.*

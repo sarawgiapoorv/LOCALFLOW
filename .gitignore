@@ -2,3 +2,6 @@ config.txt
 *.db
 __pycache__/
 .vs/
+smoke_test.py
+test_audio.wav
+test_suite.py
