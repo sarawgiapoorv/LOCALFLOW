@@ -1,44 +1,78 @@
-# LocalFlow v9.5 🎙️
+# LocalFlow 🎙️
 
-**The Ultimate Speech-to-Mind Voice Dictation Engine for Windows.**
+**The Passive Speech-to-Mind Dictation Engine for Windows.**
 
-LocalFlow is a state-of-the-art, context-aware dictation copilot engineered to match and exceed Wispr Flow. Built natively for Windows, it marries ultra-low-latency local ASR (`faster-whisper`) with Gemini cloud intelligence (`gemini-2.5-flash`) and a zero-touch local LLM fallback (`llama3.2:3b` via Ollama) to deliver real-time, speech-to-mind transcription that automatically repairs speech slips, self-corrections, and hesitations with zero friction.
+LocalFlow is an AI-powered voice dictation copilot engineered to match and exceed Wispr Flow on Windows. Built natively for desktop productivity, it combines ultra-low-latency local ASR (`faster-whisper`) with a multi-tiered LLM copyediting pipeline to deliver real-time, speech-to-mind transcription that automatically repairs speech slips, self-corrections, and hesitations with zero conversational interference.
 
 ---
 
-## 🌟 Key Features
+## 🌟 How LocalFlow Works: The Honest Architecture
 
-### 🧠 Speech-to-Mind Intelligence & Verbal Self-Correction
-- **Intelligent Mid-Speech Self-Correction**: When you change your mind mid-sentence (e.g., *"order me a pizza from dominos no order me a pizza from pizza hut"*), LocalFlow discards the canceled thought and outputs only the final intended text (*"Order me a pizza from Pizza Hut."*).
-- **Direct Polished Injection (Zero Raw Typing)**: LocalFlow eliminates buggy "optimistic raw typing" and clipboard swapping loops. Speech is transcribed and copyedited first, then typed cleanly into your active window in a single shot.
-- **Pristine Polish & Grammar**: Automatic punctuation, capitalization, filler-word pruning (`um`, `uh`, `like`), and phonetic brand correction (Pizza Hut, Domino's, GitHub, Python, VS Code).
-- **Tone Profiles**: Switch effortlessly between **Normal**, **Formal**, **Casual**, and **Developer** modes.
-- **Generative Drafting Mode**: Speak *"draft an email..."* or *"write a PR description..."* to dynamically instruct the AI to draft high-quality content directly into your active window.
+Unlike chatbots, autonomous agents, or voice assistants that attempt to execute commands or reply conversationally, LocalFlow is strictly a **passive speech-to-text dictation engine**. Whatever you speak is transcribed, polished, and typed directly at your active cursor position.
 
-### ⚡ Automatic Local LLM Fallback (`llama3.2:3b`)
-- **Zero Configuration & Headless Lifecycle**: LocalFlow auto-discovers `ollama.exe` and starts the Ollama server silently in the background (`CREATE_NO_WINDOW`) without console popups or manual URL copying.
-- **RAM Pre-Warming**: Pre-loads `llama3.2:3b` weights into memory on application startup to eliminate cold-start latency.
-- **Sticky Session Circuit Breaker**: If the Gemini API hits a rate limit (HTTP 429), quota exhaustion, or network outage, LocalFlow immediately trips into Local Mode. The current sentence is instantly rescued, and subsequent dictations remain local for zero-delay continuity.
-- **Header Engine Indicator & Manual Toggle**: The UI header displays `● Cloud Polish` (Sky Blue) or `⚡ Local LLM (llama3.2:3b)` (Amber) with a 1-click `↺ Reset` button to restore cloud polish whenever you desire.
-- **Passive Transcriber Framework**: Built with turn-based few-shots and strict anti-assistant refusal guards. The model will never reply conversationally or answer questions—it transcribes verbatim what was spoken.
+```
+[Spoken Audio]
+       │
+       ▼
+[Stage 1: Local Whisper ASR]  ──>  Ultra-fast raw transcription (faster-whisper)
+       │
+       ▼
+[Stage 2: 4-Tier Polish Pipeline]
+  ├── Tier 1: FreeLLMAPI (Local proxy, headless, 250+ free upstream models)
+  ├── Tier 2: Google Gemini (Direct Cloud, gemini-2.5-flash with key-rotation)
+  ├── Tier 3: Local LLM (Ollama llama3.2:3b, 100% offline & private)
+  └── Tier 0: Sticky Circuit Breaker (Auto-failover + self-healing TCP probe)
+       │
+       ▼
+[Stage 3: Reasoning & CoT Sanitizer]  ──> Strips <think> tags & reasoning narration
+       │
+       ▼
+[Stage 4: Text Injector]  ──> Unicode-safe typing directly at active cursor
+```
 
-### 📊 API Telemetry & Call Analytics Dashboard
-- **SQLite-Backed Telemetry**: Every API call is logged with provider slot, model, response status (`SUCCESS`, `RATE_LIMIT_429`, `TIMEOUT`, `ERROR`), and roundtrip latency in milliseconds.
-- **Live In-App Analytics**: Open the Settings drawer to view:
-  - Total API calls made & overall success rate %.
-  - Per-key breakdown for all Gemini slots and local LLM fallbacks.
-  - One-click stats clearing.
+---
 
-### 🎨 Minimalist Editorial Cream & Pure White UI
-- **Refined Minimalist Aesthetic**: Clean warm alabaster/cream (`#fbfbf8`) background with pristine white cards and deep charcoal typography.
-- **Floating Translucent Widget Mode**: Double-click the status card to toggle into a borderless, translucent floating widget that stays atop your windows with real-time waveform animations.
-- **System Tray Integration**: Minimize to tray on close, with hotkey indicators and status tooltips.
+## 🛡️ Anti-Agent & Strict Passive Dictation Guarantees
 
-### 🖥️ Native Desktop & OS Integration
-- **1-Click Desktop App**: Launch with `LocalFlow.lnk` or run silently in the background with `Launch_LocalFlow.vbs` (`pythonw.exe`).
-- **Autonomous Bootstrapper (`Launch_LocalFlow.bat`)**: Automated dependency verification and graceful compile failover.
-- **DSP Noise Gating & Audio Ducking**: Real-time spectral gating (`noisereduce`) to strip fan hum and ambient noise, with per-session media ducking (`pycaw`) during recording.
-- **Enterprise Security**: Gemini API keys are securely vaulted in the native **Windows Credential Manager** via `keyring` (no plaintext configuration files).
+1. **Zero Execution of Spoken Words**: If you dictate *"order a pizza from Domino's"*, *"turn off the lights"*, or *"build a website"*, LocalFlow transcribes those exact words cleanly. It will **never** execute, fulfill, or automate the request.
+2. **Never Answers Questions**: If you dictate *"what is the capital of France?"*, it outputs *"What is the capital of France?"* with a question mark. It will never output *"Paris"*.
+3. **Zero Conversational Filler**: No *"Sure!"*, *"Here is your text:"*, *"As an AI..."*, or apology preambles. Only the polished text reaches your screen.
+4. **Speech-to-Mind Self-Correction**: When you repair your speech mid-sentence (*"order from Domino's no wait make it Pizza Hut"*), LocalFlow outputs only the intended thought (*"Make it Pizza Hut."*).
+5. **Reasoning & CoT Leakage Guard**: Reasoning models can sometimes dump their internal deliberations (*"The user wants me to..."*). LocalFlow automatically strips `<think>` / `<reasoning>` blocks, detects unlabeled monologue leaks, recovers the clean final thought, or falls back to raw speech so deliberation walls are never typed.
+6. **Terminal / Console Safety**: When focused on command prompts (`Windows Terminal`, `PowerShell`, `cmd`, `bash`), unprompted newlines are stripped so dictated speech never accidentally submits or runs shell commands.
+
+---
+
+## ⚡ 4-Tier Intelligent Polish Pipeline
+
+### Tier 1: FreeLLMAPI Gateway (Default Cloud Tier)
+- **Headless Server Management**: `freellm_manager.py` automatically discovers, boots (`CREATE_NO_WINDOW`), health-checks, and shuts down your local FreeLLMAPI instance.
+- **Automated Vault Sync**: Automatically reads the master `unified_api_key` from FreeLLMAPI's internal SQLite database (`freeapi.db`) on first launch and vaults it into the **Windows Credential Manager** (`LocalFlow_FreeLLM`).
+- **Instruct Model Routing**: Targets fast, non-reasoning instruct models (default: `groq/llama-3.3-70b-versatile` with fallbacks to `sambanova/Meta-Llama-3.1-8B-Instruct`, `openrouter/...`, and `auto`).
+- **Strict 8-Second Timeout**: Prevents hanging on slow or overloaded upstream endpoints.
+
+### Tier 2: Direct Google Gemini Cloud
+- Direct API calls to `gemini-2.5-flash`.
+- Supports multi-key rotation (comma-separated keys in Settings).
+- Keys securely vaulted in Windows Credential Manager under `LocalFlow / api_key`.
+
+### Tier 3: Local Offline LLM (`llama3.2:3b` via Ollama)
+- Zero-touch headless auto-discovery and startup of `ollama serve`.
+- RAM pre-warming on application boot to eliminate token generation latency.
+- Completely offline, private, and free.
+
+### Tier 0: Sticky Circuit Breaker with Self-Healing Recovery
+- If cloud tiers fail or time out, LocalFlow instantly falls back to Tier 3 for zero-delay continuity.
+- Background TCP probes periodically check if the cloud gateway has recovered, automatically restoring Tier 1 without requiring manual UI intervention.
+
+---
+
+## 🎨 Minimalist Alabaster & Cream UI
+
+- **Alabaster Palette**: Refined warm cream (`#fbfbf8`) background with deep charcoal typography and crisp white cards.
+- **Engine Status Pill**: Live visual status (`● Cloud Polish` in Sky Blue, `⚡ Local LLM` in Amber) with a 1-click `↺ Reset` button.
+- **Floating Waveform Widget**: Double-click the main card to toggle a borderless, translucent floating widget that stays on top of your workspace with live recording feedback.
+- **System Tray Mode**: Close to tray, with global hotkeys active in the background.
 
 ---
 
@@ -47,72 +81,44 @@ LocalFlow is a state-of-the-art, context-aware dictation copilot engineered to m
 ### 1. Prerequisites
 - **Windows 10 / 11 (64-bit)**
 - **Python 3.10+**
-- *(Optional, Recommended for Offline Polish)*: [Ollama](https://ollama.com/) with `ollama pull llama3.2:3b`. LocalFlow will detect and launch it headlessly automatically.
+- *(Optional, for Tier 1)*: [FreeLLMAPI](https://github.com/freellmapi/freellmapi) installed in your user directory.
+- *(Optional, for Tier 3)*: [Ollama](https://ollama.com/) with `ollama pull llama3.2:3b`.
 
-### 2. Zero-Touch Launch
-Double-click `Launch_LocalFlow.bat`. 
+### 2. Launching LocalFlow
+```powershell
+# Standard GUI launch
+python main.py
 
-The launcher will:
-1. Verify your Python environment.
-2. Install or upgrade dependencies from `requirements.txt`.
-3. Handle compiler dependencies gracefully.
-4. Launch the application.
+# Launch minimized to system tray
+python main.py --silent
+```
+Or double-click `Launch_LocalFlow.bat` / `LocalFlow.lnk`.
 
-### 3. API Key Setup
-When prompted, enter your Google Gemini API key. You can add multiple comma-separated keys for automatic multi-key rotation. Keys are encrypted inside the Windows Credential Manager.
-
----
-
-## 🚀 Launch Options
-
-1. **Standard Dashboard:** 
-   ```bash
-   python main.py
-   ```
-2. **Silent System Tray Mode:**
-   ```bash
-   python main.py --silent
-   ```
-3. **Windows Startup:**
-   Toggle **"Start LocalFlow with Windows Boot"** in Settings to run silently on boot without UAC prompts.
-
----
-
-## 🎙️ Hotkeys & Voice Commands
-
-### Hotkeys
-- **Push-to-Talk:** Hold `Right Alt`, speak, and release to inject.
-- **Continuous Mode:** Press `Ctrl + Shift + A` to toggle continuous voice-activity-detected dictation.
-
-### Voice Commands
-- **"scratch that"** / **"undo that"**: Natively deletes the last dictation.
-- **"make that a bulleted list"**: Formats incoming speech as a markdown list.
-- **"rewrite clipboard"**: Polishes and formats current clipboard contents.
-- **"add [word] to my dictionary"**: Trains custom vocabulary into `dictionary.json`.
-- **"draft an email..."**: Triggers Generative AI drafting mode.
-
----
-
-## 🧪 Automated Test Suite
-
-LocalFlow comes equipped with a comprehensive 14-test automated suite verifying all core subsystems:
-```bash
-python test_suite.py
+### 3. Built-in Diagnostics
+To verify your FreeLLMAPI connection and API authentication:
+```powershell
+python diagnose_freellmapi.py
 ```
 
-Tests include:
-- Vocabulary & contextual app dictionary hints
-- Snippet text expansions
-- Tone style profile mapping
-- Fast-path suffix diffing & injection normalization
-- Connection pre-warming
-- Speech-to-mind verbal self-correction
-- Multi-key API rotation
-- Swap guard & clipboard race condition defenses
-- Local LLM inference & anti-assistant prompts (`llama3.2:3b`)
-- Sticky session circuit breaker failover
-- Persistent API telemetry & analytics reporting
+---
+
+## 🎙️ Global Hotkeys & Vocabulary
+
+- **Push-to-Talk (Default)**: Hold `Right Alt`, speak, and release to transcribe and type.
+- **Continuous Mode**: Press `Ctrl + Shift + A` to toggle hands-free VAD dictation.
+- **Dynamic Vocabulary Training**: Say *"add [word] to my dictionary"* (e.g. *"add Kubernetes to my dictionary"*) to instantly add specialized jargon to `dictionary.json`.
 
 ---
 
-*LocalFlow v9.5 — Fast, Private, and Autonomous Speech-to-Mind Dictation.*
+## 🧪 Automated Verification Suite
+
+Run the full reasoning-leak and anti-execution verification suite:
+```powershell
+python -m unittest discover -s .
+# Or run the reasoning-guard regression suite
+python run_verification_tests.py
+```
+
+---
+
+*LocalFlow — Fast, Private, and Autonomous Speech-to-Mind Dictation.*
