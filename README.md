@@ -76,7 +76,38 @@ Unlike chatbots, autonomous agents, or voice assistants that attempt to execute 
 
 ---
 
+## 🔐 Security & Bring-Your-Own-Key (BYOK) Architecture
+
+LocalFlow operates on a strict **Zero-Leakage & Privacy-First** design:
+
+> [!IMPORTANT]
+> **No API Keys or Billing Tokens are Distributed with this Repository.**
+> This project contains **zero hardcoded API keys or personal credentials**. All users must supply their own API keys or run completely key-free with offline local models. Under no circumstance will running this software bill the repository maintainer, nor can external users access your personal keys.
+
+### How to Configure Your LLM Keys (Choose Your Preferred Setup):
+
+1. **Option 1: 100% Free & Keyless via Local Offline LLM (Private & Zero Billing)**
+   - No API keys, no internet connection, and zero billing costs.
+   - Install [Ollama](https://ollama.com/) and run:
+     ```powershell
+     ollama pull llama3.2:3b
+     ```
+   - LocalFlow will auto-detect and boot `llama3.2:3b` headlessly in the background.
+
+2. **Option 2: Google Gemini Cloud (Free Tier Available)**
+   - Get your own API key directly from [Google AI Studio](https://aistudio.google.com/app/apikey).
+   - Open LocalFlow, click **Settings**, and paste your API key.
+   - *Multi-Key Rotation*: You can enter multiple keys separated by commas (e.g. `key1, key2`) for automatic rotation on rate limits.
+   - **Vault Security**: Keys are stored encrypted inside your local **Windows Credential Manager** (`LocalFlow / api_key`) via `keyring`. They are **never stored in plaintext files or committed to git**.
+
+3. **Option 3: FreeLLMAPI (Self-Hosted Open Gateway)**
+   - Run your own local instance of [FreeLLMAPI](https://github.com/freellmapi/freellmapi).
+   - LocalFlow automatically discovers the server at `http://127.0.0.1:3001/v1` and syncs with your local instance's private key into your Windows Credential Vault.
+
+---
+
 ## 🛠️ Setup & Installation
+
 
 ### 1. Prerequisites
 - **Windows 10 / 11 (64-bit)**

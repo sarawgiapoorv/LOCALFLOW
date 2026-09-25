@@ -1,7 +1,31 @@
+# Local configuration & credentials
 config.txt
+*.env
+.env
+*.key
+.encryption-key
+
+# Databases & local state
 *.db
+*.db-journal
+*.db-wal
+localflow_history.db*
+freeapi.db*
+
+# Python & editor cache
 __pycache__/
+*.pyc
+*.pyo
 .vs/
-smoke_test.py
+.vscode/
+.idea/
+
+# Audio artifacts & test recordings
+*.wav
+*.mp3
 test_audio.wav
+smoke_test.py
 test_suite.py
+
+# Logs
+*.log
