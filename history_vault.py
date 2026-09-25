@@ -116,12 +116,12 @@ class HistoryVault:
     # ------------------------------------------------------------------
     def log_api_call(self, provider: str, model: str, status: str, latency_ms: int) -> None:
         """
-        Record an API attempt (Cloud Gemini or Local LLM).
+        Record an API attempt (FreeLLMAPI, Cloud Gemini, or Local LLM).
 
         Args:
-            provider: e.g. 'Gemini (Slot 0)', 'Gemini (Slot 1)', 'Local LLM (llama3.2:3b)'
-            model: e.g. 'gemini-2.5-flash', 'llama3.2:3b'
-            status: 'SUCCESS', 'RATE_LIMIT_429', 'TIMEOUT', 'OVERLOAD_503', 'ERROR'
+            provider: e.g. 'FreeLLMAPI', 'Gemini (Slot 0)', 'Gemini (Slot 1)', 'Local LLM (llama3.2:3b)'
+            model: e.g. 'auto', 'gemini-2.5-flash', 'llama3.2:3b'
+            status: 'SUCCESS', 'RATE_LIMIT_429', 'TIMEOUT', 'OVERLOAD_503', 'CONNECTION_ERROR', 'ERROR'
             latency_ms: Roundtrip execution time in milliseconds.
         """
         timestamp = datetime.now().strftime("%b %d, %Y -- %I:%M:%S %p")

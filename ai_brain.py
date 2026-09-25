@@ -50,6 +50,27 @@ DICTIONARY_LOCK = threading.Lock()
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
+# FreeLLMAPI (OpenAI-compatible free proxy) configuration
+# ── URL normalization ──────────────────────────────────────────────────────
+# Always resolve to explicit 127.0.0.1 to avoid Windows IPv6 (::1) failures.
+# If the env var already uses 127.0.0.1 or a remote host, honour it as-is.
+_raw_freellm_url = os.getenv("FREELLMAPI_BASE_URL", "http://localhost:3001/v1").rstrip("/")
+FREELLMAPI_BASE_URL = _raw_freellm_url.replace("localhost", "127.0.0.1")
+# Ensure /v1 suffix is present so endpoint paths stay clean
+if not FREELLMAPI_BASE_URL.endswith("/v1"):
+    FREELLMAPI_BASE_URL = FREELLMAPI_BASE_URL.rstrip("/") + "/v1"
+
+FREELLMAPI_DEFAULT_MODEL = "groq/llama-3.3-70b-versatile"
+
+# Ordered fallback model list tried when the default model fails.
+# 'auto' is placed at the end as a last resort.
+FREELLMAPI_FALLBACK_MODELS: list[str] = [
+    "sambanova/Meta-Llama-3.1-8B-Instruct",
+    "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+    "auto",
+]
+
+
 # Ordered failover array: fastest first, then fallbacks
 # TODO: This array currently only contains a single model (gemini-2.5-flash),
 # so the multi-model fallback advertised in README is not actually functioning yet.
@@ -60,9 +81,11 @@ GEMINI_MODELS = [
 
 LLM_TEMPERATURE = 0.3
 LLM_MAX_TOKENS = 2048
-REQUEST_TIMEOUT = 30       # seconds per API call
-MAX_RETRIES = 2            # retries per model on transient errors
-RETRY_BACKOFF = 2.0        # seconds between retries
+REQUEST_TIMEOUT = 30                 # seconds per direct Gemini API call
+FREELLMAPI_REQUEST_TIMEOUT = 8       # strict seconds per FreeLLMAPI call to prevent hangs
+MAX_RETRIES = 2                      # retries per model on transient errors
+RETRY_BACKOFF = 2.0                  # seconds between retries
+
 
 # ---------------------------------------------------------------------------
 # Transcription system instruction (anti-chatbot for Stage 1)
@@ -118,33 +141,18 @@ TONE_PROFILES = {
 # ---------------------------------------------------------------------------
 
 EDITOR_SYSTEM_PROMPT = (
-    "You are an elite, highly intelligent voice dictation AI brain (similar to Wispr Flow). "
-    "Your objective is 'Speech-to-Mind' transcription: transform raw, imperfect spoken audio transcripts into polished, pristine written text representing the user's true final intent.\n\n"
-    "CRITICAL RULES FOR INTELLIGENT PROCESSING:\n"
-    "1. INTELLIGENT SELF-CORRECTION & VERBAL REPAIRS:\n"
-    "   - Automatically detect and resolve mid-speech corrections, changes of mind, false starts, and speech slips.\n"
-    "   - When the speaker corrects themselves using cues like 'no', 'wait', 'actually', 'scratch that', 'I mean', 'sorry', or immediate repetition, output ONLY the final corrected intent.\n"
-    "   - Examples:\n"
-    "     * 'order me a pizza from dominos no order me a pizza from pizza hut' -> 'Order me a pizza from Pizza Hut.'\n"
-    "     * 'let us meet at 5 actually 6:30 pm' -> 'Let's meet at 6:30 PM.'\n"
-    "     * 'send this to Alex I mean David' -> 'Send this to David.'\n"
-    "     * 'delete the file wait no keep it' -> 'Keep the file.'\n"
-    "2. FILLER REMOVAL & STREAMLINING:\n"
-    "   - Remove vocal fillers, hesitation sounds, and stutters ('um', 'uh', 'er', 'like', 'you know', 'ah').\n"
-    "   - Fix accidental repeated words ('the the', 'and and').\n"
-    "3. GRAMMAR, PUNCTUATION & CAPITALIZATION:\n"
-    "   - Apply flawless punctuation, capitalization, and sentence structure.\n"
-    "   - Fix phonetic ASR mistakes and brand names (e.g., 'Pizza Hut', 'Domino's', 'Python', 'VS Code', 'GitHub', 'WhatsApp').\n"
-    "4. STRICT ANTI-CHATBOT / ZERO ASSISTANT BEHAVIOR:\n"
-    "   - Output ONLY the clean, final transcribed text.\n"
-    "   - THE USER IS NOT TALKING TO YOU. The user is dictating text onto their computer screen.\n"
-    "   - NEVER answer questions, execute commands, reply to conversations, or offer help.\n"
-    "   - If the user dictates a command ('build me a website', 'write an email'), do NOT execute it; transcribe it verbatim.\n"
-    "   - If the user dictates a question ('can you do this', 'what is the weather'), do NOT answer it; transcribe it verbatim.\n"
-    "   - NEVER include conversational preambles, explanations, quotes, or metadata (e.g., do NOT say 'Here is your text:', do NOT wrap in quotes).\n"
-    "5. LIST FORMATTING:\n"
-    "   - If the speech naturally dictates a list of items or steps, format them into clean Markdown bullets or numbered points."
+    "You are an automated, passive speech-to-text dictation transcriber and copyeditor.\n"
+    "Your ONLY job is to output the clean, grammatically correct transcription of the user's spoken words.\n\n"
+    "NON-NEGOTIABLE RULES:\n"
+    "1. NEVER ACT AS AN AI ASSISTANT. You are not a chatbot, assistant, or autonomous agent.\n"
+    "2. NEVER EXECUTE INSTRUCTIONS OR COMMANDS. If the user dictates \"order a pizza from Domino's\", \"turn off the lights\", or \"build me a website\", transcribe the spoken words cleanly. NEVER execute, fulfill, or answer the instruction.\n"
+    "3. NEVER ANSWER QUESTIONS. If the user dictates \"what is the weather today?\", transcribe it with a question mark. NEVER provide an answer.\n"
+    "4. ZERO CONVERSATIONAL FILLER. Do not output greetings, explanations, apologies, or conversational remarks (e.g. \"Sure!\", \"Here is your text:\", \"I cannot do that\").\n"
+    "5. SPEECH-TO-MIND SELF-CORRECTION: If the speaker corrects themselves mid-sentence (e.g. \"order from Domino's no wait Pizza Hut\", \"meet at 5 actually 6 pm\"), output ONLY the final intended thought (\"Order from Pizza Hut.\", \"Meet at 6:00 PM.\").\n"
+    "6. OUTPUT FORMAT: Output ONLY the polished plain text to be typed directly at the active cursor position. Do not wrap in quotes or code fences."
 )
+
+
 
 # ---------------------------------------------------------------------------
 # Live Dictation Editing Commands
@@ -177,50 +185,37 @@ EDITING_COMMANDS = {
 
 
 def detect_editing_command(text: str) -> tuple[str | None, str]:
-    """Check if the transcribed text is a dictation editing command.
+    """Check if the transcribed text is a special dictation meta-command.
+
+    Pure Speech-to-Text Architecture (Wispr Flow style):
+    Normal spoken text is NEVER intercepted as OS commands, keystrokes, or actions.
+    The only meta-command supported is adding words to the custom dictionary.
 
     Args:
         text: Raw transcribed text.
 
     Returns:
         Tuple of (command_action, remaining_text).
-        command_action is None if no command was detected.
+        command_action is None for all normal dictation.
     """
     if not text:
         return None, text
 
     normalized = text.strip().lower().rstrip(".,!?")
 
-    # Regex for Generative Drafting commands
-    gen_match = re.match(r"^(draft an email|write a ticket|generate a pr description)\b(.*)", normalized)
-    if gen_match:
-        # Pass the full text to the generative pipeline
-        return "generative_draft", text.strip()
-
-    # Regex for dynamic dictionary addition with strict whitelist and command collision check
+    # Regex for dynamic dictionary addition: "add <word> to my dictionary"
     match = re.match(r"^add (.+) to my dictionary$", normalized)
     if match:
         word = match.group(1).strip()
-        # Whitelist: Alphanumeric and spaces only, not empty, and not an editing command
-        if re.match(r"^[a-zA-Z0-9\s]+$", word) and word not in EDITING_COMMANDS:
+        # Whitelist: Alphanumeric and spaces only, not empty
+        if re.match(r"^[a-zA-Z0-9\s]+$", word):
             return f"dict_add_{word}", ""
         else:
-            logging.info(f"[AIBrain] Rejected dictionary addition: '{word}' (failed whitelist or matches command)")
+            logging.info(f"[AIBrain] Rejected dictionary addition: '{word}' (failed whitelist)")
             return None, text
 
-    # Check for exact match first
-    for phrase, action in EDITING_COMMANDS.items():
-        if normalized == phrase:
-            return action, ""
-
-    # Check if text starts with a command using word boundary (\b) check
-    for phrase, action in EDITING_COMMANDS.items():
-        pattern = r"^" + re.escape(phrase) + r"\b"
-        if re.match(pattern, normalized):
-            remainder = text[len(phrase):].strip()
-            return action, remainder
-
     return None, text
+
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +318,7 @@ class AIBrain:
     def __init__(self, vault: HistoryVault | None = None) -> None:
         self._api_keys: list[str] = self._load_api_keys()
         self._current_key_index: int = 0
+        self._freellmapi_api_key: str = self._load_freellmapi_api_key()
         self.style: str = "Normal"
         self._lock = threading.Lock()
         self._cached_vocab = []
@@ -411,6 +407,134 @@ class AIBrain:
         self._api_keys = keys
         self._current_key_index = 0
         logging.info(f"[AIBrain] Set {len(keys)} API key(s) at runtime.")
+
+    @staticmethod
+    def _discover_freellmapi_key_from_db() -> str:
+        """
+        Tier 3 auto-discovery: read unified_api_key directly from FreeLLMAPI's
+        SQLite database, then persist it to Windows Credential Manager so
+        subsequent launches skip this step entirely.
+
+        Locates the database via:
+          1. FREELLMAPI_DIR env var → server/data/freeapi.db
+          2. config.txt FREELLMAPI_DIR entry → server/data/freeapi.db
+          3. Known absolute default path
+        """
+        import sqlite3
+
+        # Build candidate DB paths from the same discovery logic used by freellm_manager
+        candidates: list[str] = []
+
+        # From env / config.txt
+        env_dir = os.getenv("FREELLMAPI_DIR", "").strip()
+        if env_dir:
+            candidates.append(os.path.join(env_dir, "server", "data", "freeapi.db"))
+
+        # From config.txt
+        try:
+            cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.txt")
+            if os.path.isfile(cfg_path):
+                for line in open(cfg_path, encoding="utf-8").read().splitlines():
+                    if line.strip().startswith("FREELLMAPI_DIR="):
+                        saved_dir = line.split("=", 1)[1].strip()
+                        if saved_dir:
+                            candidates.append(os.path.join(saved_dir, "server", "data", "freeapi.db"))
+        except Exception:
+            pass
+
+        # Common absolute fallback
+        candidates.append(
+            os.path.join(os.path.expanduser("~"), "freellmapi", "server", "data", "freeapi.db")
+        )
+
+        for db_path in candidates:
+            if not os.path.isfile(db_path):
+                continue
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+                row = conn.execute(
+                    "SELECT value FROM settings WHERE key='unified_api_key'"
+                ).fetchone()
+                conn.close()
+                if row and row[0]:
+                    key = row[0].strip()
+                    logging.info(
+                        "[AIBrain] FreeLLMAPI unified master API key auto-discovered "
+                        f"from local DB ({db_path}) and will be vaulted."
+                    )
+                    # Persist to Credential Manager for future launches
+                    if HAS_KEYRING:
+                        try:
+                            keyring.set_password("LocalFlow_FreeLLM", "api_key", key)
+                            logging.info(
+                                "[AIBrain] FreeLLMAPI unified master API key auto-discovered "
+                                "from local DB and vaulted successfully."
+                            )
+                        except Exception as vault_err:
+                            logging.warning(
+                                f"[AIBrain] Could not vault FreeLLMAPI key to Credential Manager: {vault_err}"
+                            )
+                    return key
+            except Exception as db_err:
+                logging.debug(f"[AIBrain] Could not read FreeLLMAPI DB at {db_path}: {db_err}")
+
+        return ""
+
+    @staticmethod
+    def _load_freellmapi_api_key() -> str:
+        """
+        Load the FreeLLMAPI unified API key using a 4-tier resolution hierarchy:
+
+          Tier 1 — FREELLMAPI_API_KEY environment variable (fastest, CI-friendly)
+          Tier 2 — Windows Credential Manager  (keyring: LocalFlow_FreeLLM / api_key)
+          Tier 3 — Auto-discovery from FreeLLMAPI's local SQLite DB (freeapi.db)
+                   → Discovered key is automatically vaulted to Tier 2 for future use.
+          Tier 4 — Fail with an explicit, actionable log message (no silent empty return).
+
+        A missing or empty key means all FreeLLMAPI requests are skipped entirely
+        (no dummy Bearer tokens are ever transmitted to the server).
+        """
+        # Tier 1: environment variable
+        env_key = os.getenv("FREELLMAPI_API_KEY", "").strip()
+        if env_key:
+            logging.debug("[AIBrain] FreeLLMAPI key resolved from FREELLMAPI_API_KEY env var.")
+            return env_key
+
+        # Tier 2: Windows Credential Manager
+        if HAS_KEYRING:
+            try:
+                val = keyring.get_password("LocalFlow_FreeLLM", "api_key")
+                if val and val.strip():
+                    logging.debug("[AIBrain] FreeLLMAPI key resolved from Windows Credential Manager.")
+                    return val.strip()
+            except Exception as e:
+                logging.warning(f"[AIBrain] Keyring read failed: {e}")
+
+        # Tier 3: auto-discover from FreeLLMAPI's local SQLite DB
+        db_key = AIBrain._discover_freellmapi_key_from_db()
+        if db_key:
+            return db_key
+
+        # Tier 4: all tiers exhausted — log clearly and return empty
+        logging.warning(
+            "[AIBrain] FreeLLMAPI API key not found in any source "
+            "(env FREELLMAPI_API_KEY, Credential Manager, or freeapi.db). "
+            "FreeLLMAPI (Tier 1) will be SKIPPED. "
+            "Fix: open the FreeLLMAPI dashboard at http://127.0.0.1:3001, "
+            "copy the API key from Settings, and store it via: "
+            "keyring.set_password('LocalFlow_FreeLLM', 'api_key', '<your-key>')"
+        )
+        return ""
+
+    @property
+    def freellmapi_api_key(self) -> str:
+        """Return the active FreeLLMAPI API key."""
+        return self._freellmapi_api_key
+
+    def set_freellmapi_api_key(self, key: str) -> None:
+        """Set the FreeLLMAPI API key at runtime."""
+        self._freellmapi_api_key = key.strip()
+        logging.info(f"[AIBrain] FreeLLMAPI API key updated at runtime.")
 
     # ------------------------------------------------------------------
     # Style management
@@ -585,6 +709,279 @@ class AIBrain:
         return None
 
     # ------------------------------------------------------------------
+    # Internal: Make a FreeLLMAPI / OpenAI-compatible chat completion call
+    # ------------------------------------------------------------------
+
+    def _fetch_freellmapi_models(self) -> list[str]:
+        """Query GET /v1/models and return the list of advertised model IDs.
+
+        Used by _call_freellmapi_or_openai when 'auto' routing fails, to pick
+        the first real upstream model and retry the completion.
+        Returns an empty list on any failure (server down, timeout, parse error).
+        """
+        if not self._freellmapi_api_key:
+            return []
+        url = f"{FREELLMAPI_BASE_URL}/models"
+        headers = {"Authorization": f"Bearer {self._freellmapi_api_key}"}
+        try:
+            resp = self._session.get(url, headers=headers, timeout=4.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                ids = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+                if ids:
+                    logging.info(f"[FreeLLMAPI] /v1/models returned {len(ids)} model(s): {ids}")
+                return ids
+            logging.warning(f"[FreeLLMAPI] /v1/models returned HTTP {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logging.warning(f"[FreeLLMAPI] /v1/models lookup failed: {e}")
+        return []
+
+    def _call_freellmapi_or_openai(
+        self,
+        model: str = FREELLMAPI_DEFAULT_MODEL,
+        system_instruction: str = "",
+        user_text: str = "",
+        temperature: float = LLM_TEMPERATURE,
+        max_tokens: int = 300,
+        timeout: int = FREELLMAPI_REQUEST_TIMEOUT,
+        is_generative: bool = False,
+    ) -> str | None:
+
+        """Call FreeLLMAPI (or any OpenAI-compatible proxy) via /v1/chat/completions.
+
+        Behaviour:
+          1. Always targets http://127.0.0.1 explicitly (avoids Windows IPv6 ::1 failures).
+          2. Requires a valid FreeLLMAPI unified API key. If none is resolved (env var,
+             Credential Manager, or SQLite auto-discovery all failed), the method returns
+             None immediately with an explicit log — no dummy Bearer tokens are sent.
+          3. If model='auto' returns HTTP 400/404 (no default route configured), this
+             method automatically retries with the fallback model list defined in
+             FREELLMAPI_FALLBACK_MODELS, and also with any live models from /v1/models.
+          4. Logs the exact HTTP status, truncated response body, and roundtrip latency
+             on every failure for actionable diagnostics.
+        """
+        # ── Guard: fast-fail if no key is available ─────────────────────────
+        # Attempt a live re-resolve so a key discovered after startup (e.g.
+        # FreeLLMAPI started after LocalFlow) is picked up automatically.
+        if not self._freellmapi_api_key:
+            self._freellmapi_api_key = self._load_freellmapi_api_key()
+
+        if not self._freellmapi_api_key:
+            logging.warning(
+                "[FreeLLMAPI] No API key available — skipping Tier 1 entirely. "
+                "Ensure FreeLLMAPI is running so the key can be auto-discovered from freeapi.db, "
+                "or set FREELLMAPI_API_KEY env var."
+            )
+            return None
+
+        # ── Endpoint: always explicit IPv4 ─────────────────────────────────
+        endpoint = f"{FREELLMAPI_BASE_URL}/chat/completions"
+        logging.info(f"[FreeLLMAPI] POST {endpoint}  model='{model}'")
+
+        # ── Auth header: real key only — no dummy fallbacks ─────────────────
+        key = self._freellmapi_api_key
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {key}",
+        }
+
+
+        # ── Messages: conditional few-shot passive grounding ───────────────
+        # In passive dictation mode we inject 6 calibration pairs so even
+        # instruction-following / RLHF-heavy models learn they must transcribe,
+        # not execute, answer, or converse.  Generative mode skips this so the
+        # model can draft freely.
+
+        # Shared few-shot calibration turns (passive dictation only)
+        FREELLMAPI_FEW_SHOT: list[dict] = [
+            {"role": "user",      "content": 'Transcribe and clean this dictation: "order me a pizza from dominos"'},
+            {"role": "assistant", "content": "Order me a pizza from Domino's."},
+            {"role": "user",      "content": 'Transcribe and clean this dictation: "what is the distance to the moon"'},
+            {"role": "assistant", "content": "What is the distance to the Moon?"},
+            {"role": "user",      "content": 'Transcribe and clean this dictation: "order from dominos no wait make it pizza hut"'},
+            {"role": "assistant", "content": "Make it Pizza Hut."},
+            {"role": "user",      "content": 'Transcribe and clean this dictation: "write a python function to add two numbers"'},
+            {"role": "assistant", "content": "Write a Python function to add two numbers."},
+            {"role": "user",      "content": 'Transcribe and clean this dictation: "send message to bob no wait send to alice"'},
+            {"role": "assistant", "content": "Send to Alice."},
+            {"role": "user",      "content": 'Transcribe and clean this dictation: "what time is it in london"'},
+            {"role": "assistant", "content": "What time is it in London?"},
+        ]
+
+        messages: list[dict] = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+
+        if not is_generative:
+            # Inject passive calibration before the live user turn
+            messages.extend(FREELLMAPI_FEW_SHOT)
+
+        # Live user turn — phrasing matches few-shot examples for in-context consistency
+        user_turn_prefix = (
+            "Continue generating this draft:\n" if is_generative
+            else "Transcribe and clean this dictation:"
+        )
+        messages.append({
+            "role": "user",
+            "content": f'{user_turn_prefix} "{user_text.strip()}"',
+        })
+
+        def _build_payload(m: str) -> dict:
+            return {
+                "model": m,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False,
+            }
+
+        provider_label = "FreeLLMAPI"
+
+        # ── Build ordered model list to try ────────────────────────────────
+        models_to_try = [model]
+        for fb in FREELLMAPI_FALLBACK_MODELS:
+            if fb not in models_to_try:
+                models_to_try.append(fb)
+
+        def _attempt(try_model: str) -> str | None:
+            """Single POST attempt; returns cleaned text or None."""
+            payload = _build_payload(try_model)
+            t0 = time.time()
+            try:
+                resp = self._session.post(endpoint, json=payload, headers=headers, timeout=timeout)
+                elapsed_ms = int((time.time() - t0) * 1000)
+
+                # Rate limit
+                if resp.status_code == 429:
+                    logging.warning(
+                        f"[FreeLLMAPI] Rate limited (429) on model='{try_model}' "
+                        f"after {elapsed_ms}ms."
+                    )
+                    self.vault.log_api_call(provider_label, try_model, "RATE_LIMIT_429", elapsed_ms)
+                    return None
+
+                # Server overload
+                if resp.status_code == 503:
+                    logging.warning(
+                        f"[FreeLLMAPI] Service unavailable (503) on model='{try_model}' "
+                        f"after {elapsed_ms}ms."
+                    )
+                    self.vault.log_api_call(provider_label, try_model, "OVERLOAD_503", elapsed_ms)
+                    return None
+
+                # Bad model / not found / bad request -- signal to try fallback
+                if resp.status_code in (400, 404, 422):
+                    logging.warning(
+                        f"[FreeLLMAPI] HTTP {resp.status_code} for model='{try_model}' "
+                        f"({elapsed_ms}ms) -- model may not be configured. "
+                        f"Response: {resp.text[:300]}"
+                    )
+                    self.vault.log_api_call(provider_label, try_model, f"HTTP_{resp.status_code}", elapsed_ms)
+                    return None
+
+                # Auth error
+                if resp.status_code in (401, 403):
+                    logging.error(
+                        f"[FreeLLMAPI] Auth error HTTP {resp.status_code} on model='{try_model}': "
+                        f"{resp.text[:300]}"
+                    )
+                    self.vault.log_api_call(provider_label, try_model, f"AUTH_{resp.status_code}", elapsed_ms)
+                    return None
+
+                # Any other non-200
+                if resp.status_code != 200:
+                    logging.error(
+                        f"[FreeLLMAPI] Request failed: HTTP {resp.status_code} "
+                        f"on model='{try_model}' after {elapsed_ms}ms -- {resp.text[:300]}"
+                    )
+                    self.vault.log_api_call(provider_label, try_model, f"HTTP_{resp.status_code}", elapsed_ms)
+                    return None
+
+                # Success path
+                data = resp.json()
+                raw_output = (
+                    data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
+                if raw_output:
+                    cleaned = LocalLLMEngine._clean_model_output(raw_output, raw_text=user_text)
+                    self.vault.log_api_call(provider_label, try_model, "SUCCESS", elapsed_ms)
+                    logging.info(
+                        f"[FreeLLMAPI] Polish OK in {elapsed_ms}ms model='{try_model}': "
+                        f"{repr(cleaned)}"
+                    )
+                    return cleaned
+                else:
+                    logging.warning(
+                        f"[FreeLLMAPI] HTTP 200 but empty choices[0].message.content "
+                        f"for model='{try_model}'. Raw body: {resp.text[:200]}"
+                    )
+                    self.vault.log_api_call(provider_label, try_model, "EMPTY_RESPONSE", elapsed_ms)
+                    return None
+
+            except requests.exceptions.ConnectTimeout:
+                elapsed_ms = int((time.time() - t0) * 1000)
+                logging.error(
+                    f"[FreeLLMAPI] Connection refused: Server is not running at "
+                    f"{FREELLMAPI_BASE_URL}. (ConnectTimeout after {elapsed_ms}ms)"
+                )
+                self.vault.log_api_call(provider_label, try_model, "CONNECT_TIMEOUT", elapsed_ms)
+                return None
+            except requests.exceptions.ReadTimeout:
+                elapsed_ms = int((time.time() - t0) * 1000)
+                logging.error(
+                    f"[FreeLLMAPI] Timed out waiting for response from model='{try_model}' "
+                    f"(ReadTimeout after {elapsed_ms}ms)."
+                )
+                self.vault.log_api_call(provider_label, try_model, "READ_TIMEOUT", elapsed_ms)
+                return None
+            except requests.exceptions.ConnectionError as e:
+                elapsed_ms = int((time.time() - t0) * 1000)
+                logging.error(
+                    f"[FreeLLMAPI] Connection refused: Server is not running at "
+                    f"{FREELLMAPI_BASE_URL}. Detail: {e}"
+                )
+                self.vault.log_api_call(provider_label, try_model, "CONNECTION_ERROR", elapsed_ms)
+                return None
+            except requests.exceptions.RequestException as e:
+                elapsed_ms = int((time.time() - t0) * 1000)
+                logging.error(f"[FreeLLMAPI] RequestException on model='{try_model}': {e}")
+                self.vault.log_api_call(provider_label, try_model, "REQUEST_ERROR", elapsed_ms)
+                return None
+            except Exception as e:
+                elapsed_ms = int((time.time() - t0) * 1000)
+                logging.error(f"[FreeLLMAPI] Unexpected error on model='{try_model}': {e}")
+                self.vault.log_api_call(provider_label, try_model, "ERROR", elapsed_ms)
+                return None
+
+        # ── Try primary model first ─────────────────────────────────────────
+        result = _attempt(model)
+        if result is not None:
+            return result
+
+        # ── If primary failed with 400/404, query live models and try fallbacks ──
+        live_models = self._fetch_freellmapi_models()
+        for live_model in live_models:
+            if live_model not in models_to_try:
+                models_to_try.insert(1, live_model)  # prioritize live models
+
+        for fallback_model in models_to_try[1:]:  # skip index 0 (already tried)
+            logging.info(f"[FreeLLMAPI] Retrying with fallback model='{fallback_model}'...")
+            result = _attempt(fallback_model)
+            if result is not None:
+                return result
+
+        logging.warning(
+            f"[FreeLLMAPI] All {len(models_to_try)} model attempt(s) exhausted. "
+            f"Yielding to Tier 2 (Gemini)."
+        )
+        return None
+
+
+
+    # ------------------------------------------------------------------
     # Stage 1: Transcription (audio -> text)
     # ------------------------------------------------------------------
 
@@ -753,11 +1150,13 @@ class AIBrain:
             if context_info:
                 app_hint = context_info.get("app_hint", "")
                 if app_hint in ["VS Code", "Windows Terminal"]:
-                    system_prompt += "\n\nCONTEXT RULES (CODE EDITOR):\n"
-                    system_prompt += "The user is dictating into a code editor/terminal. Interpret spoken syntax natively " \
-                                     "(e.g., 'def calculate total open parenthesis items colon list close parenthesis colon new line indent return sum items' -> " \
-                                     "`def calculate_total(items: list):\\n    return sum(items)`). " \
-                                     "Heavily favor snake_case for Python/SQL and camelCase for JavaScript contexts. Output perfect runnable code."
+                    system_prompt += "\n\nCONTEXT RULES (CODE EDITOR / TERMINAL):\n"
+                    system_prompt += "The user is dictating text while focused on a code editor or terminal. " \
+                                     "You are strictly a passive speech-to-text transcriber, NOT an assistant or code generator. " \
+                                     "Transcribe ONLY what the user speaks. " \
+                                     "If the user speaks code syntax (variable names, snake_case, camelCase), preserve that formatting cleanly, " \
+                                     "but NEVER invent, execute, or output executable shell commands, code, or scripts that the user did not say."
+
                 elif app_hint in ["Slack", "Discord", "Telegram"]:
                     system_prompt += "\n\nCONTEXT RULES (CASUAL CHAT):\n"
                     system_prompt += "The user is dictating into a casual chat app. Enforce a relaxed, conversational tone. Contractions are fine."
@@ -768,7 +1167,34 @@ class AIBrain:
         if formatting_instruction:
             system_prompt += f"\n\nUSER FORMATTING COMMAND INSTRUCTION:\n{formatting_instruction}"
 
-        # 1. If Sticky Local Mode is active, bypass Cloud directly
+        # Dynamic token limit: 300 for short dictations, 2048 for generative drafting
+        max_output_tokens = LLM_MAX_TOKENS if is_generative else 300
+
+        # Tier 0. If Sticky Local Mode is active, probe FreeLLMAPI first.
+        # If FreeLLMAPI appears reachable again, auto-reset sticky mode so the
+        # pipeline can recover without requiring a manual GUI button press.
+        if self._sticky_local_mode:
+            # Quick TCP probe to see if FreeLLMAPI came back online
+            import socket as _socket
+            from urllib.parse import urlparse as _urlparse
+            _parsed = _urlparse(FREELLMAPI_BASE_URL)
+            _port = _parsed.port or 3001
+            try:
+                with _socket.create_connection(("127.0.0.1", _port), timeout=0.5):
+                    logging.info(
+                        "[AIBrain] Sticky local mode detected but FreeLLMAPI is now reachable -- "
+                        "auto-resetting to cloud pipeline."
+                    )
+                    self._sticky_local_mode = False
+                    if callable(self.on_mode_change):
+                        try:
+                            self.on_mode_change("cloud")
+                        except Exception:
+                            pass
+            except Exception:
+                # Server still down -- stay in sticky local mode
+                pass
+
         if self._sticky_local_mode:
             logging.info(f"[AIBrain] Sticky Local LLM mode is active. Polishing via {self.local_engine.model}...")
             t0 = time.time()
@@ -782,7 +1208,25 @@ class AIBrain:
                 logging.warning("[AIBrain] Local LLM polish failed -- returning raw text.")
                 return raw_text
 
-        # 2. Attempt Cloud Gemini Failover Array if an API key exists
+        # Tier 1 (Free Proxy): Call FreeLLMAPI (auto-routes across free upstream providers)
+        logging.info("[AIBrain] Attempting Stage 2 polish via FreeLLMAPI proxy...")
+        freellm_res = self._call_freellmapi_or_openai(
+            model=FREELLMAPI_DEFAULT_MODEL,
+            system_instruction=system_prompt,
+            user_text=raw_text,
+            temperature=temperature,
+            max_tokens=max_output_tokens,
+            timeout=FREELLMAPI_REQUEST_TIMEOUT,
+            is_generative=is_generative,
+        )
+
+
+        if freellm_res:
+            logging.info(f"[AIBrain] Tier 1 Polish succeeded with FreeLLMAPI ({FREELLMAPI_DEFAULT_MODEL})")
+            return freellm_res
+        logging.info("[AIBrain] FreeLLMAPI unavailable or failed. Falling back to Tier 2 (Direct Gemini Cloud)...")
+
+        # Tier 2 (Direct Cloud Gemini): Multi-model failover array
         formatted_prompt = f'Dictated spoken audio transcript:\n"""{raw_text.strip()}"""\n\nClean polished transcript:'
         contents = [{"parts": [{"text": formatted_prompt}]}]
         if self.api_key:
@@ -792,16 +1236,25 @@ class AIBrain:
                     system_instruction=system_prompt,
                     contents=contents,
                     temperature=temperature,
+                    max_tokens=max_output_tokens,
                     timeout=REQUEST_TIMEOUT,
                 )
                 if result is not None:
-                    logging.info(f"[AIBrain] Polish succeeded with {model}")
+                    logging.info(f"[AIBrain] Tier 2 Polish succeeded with Gemini model {model}")
                     return result
                 logging.info(f"[AIBrain] {model} polish failed, trying next...")
+        else:
+            logging.warning(
+                "[AIBrain] Tier 2 SKIPPED: No Gemini API key is configured. "
+                "Set one via the GUI Settings or store in Windows Credential Manager "
+                "under service='LocalFlow', username='api_key'. "
+                "This is why LocalFlow fell through to local Ollama."
+            )
 
-        # 3. Circuit Breaker: Cloud failed or unavailable -> Activate Sticky Local LLM
+
+        # Tier 3 (Local Ollama Fallback): Circuit Breaker: Cloud & Proxy failed or unavailable -> Activate Sticky Local LLM
         logging.warning(
-            f"[AIBrain] Cloud polish unavailable or exhausted. Activating sticky local LLM fallback ({self.local_engine.model})."
+            f"[AIBrain] FreeLLMAPI and Gemini polish unavailable or exhausted. Activating sticky local LLM fallback ({self.local_engine.model})."
         )
         self._sticky_local_mode = True
         if callable(self.on_mode_change):
@@ -849,64 +1302,18 @@ class AIBrain:
 
         logging.info(f"[AIBrain] Raw transcript: {raw_text}")
 
-        # Check for editing commands
+        # Optional: check if user explicitly requested dictionary learning ("add <word> to my dictionary")
         command, remainder = detect_editing_command(raw_text)
-        formatting_instruction = ""
-        is_generative = False
-        
-        if command:
-            if command == "generative_draft":
-                logging.info("[AIBrain] Generative Draft command detected.")
-                is_generative = True
-                
-            elif command.startswith("dict_add_"):
-                word_to_add = command[len("dict_add_"):]
-                logging.info(f"[AIBrain] Dynamic memory requested for: {word_to_add}")
-                self._add_to_dictionary(word_to_add)
-                return (raw_text, f"__CMD__flash_dict_{word_to_add}")
+        if command and command.startswith("dict_add_"):
+            word_to_add = command[len("dict_add_"):]
+            logging.info(f"[AIBrain] Dynamic memory requested for: {word_to_add}")
+            self._add_to_dictionary(word_to_add)
+            return (raw_text, f"Learned: '{word_to_add}' added to memory!")
 
-            elif command.startswith("clipboard_"):
-                logging.info(f"[AIBrain] Clipboard command detected: {command}")
-                if HAS_PYPERCLIP:
-                    clipboard_text = pyperclip.paste()
-                    if clipboard_text:
-                        logging.info("[AIBrain] Overwriting raw transcript with clipboard content.")
-                        # Sanitize: strip out prompt injection triggers to prevent memory/instruction hijacking
-                        sanitized = clipboard_text.strip()
-                        sanitized = re.sub(
-                            r'(?i)\b(ignore\s+(all\s+)?previous\s+instructions|system\s+instruction|you\s+must\s+now|developer\s+mode)\b',
-                            '[neutralized]',
-                            sanitized
-                        )
-                        raw_text = sanitized
-                        if command == "clipboard_rewrite":
-                            formatting_instruction = "Rewrite the provided text cleanly and fluently."
-                        elif command == "clipboard_summarize":
-                            formatting_instruction = "Summarize the provided text concisely."
-                    else:
-                        logging.info("[AIBrain] Clipboard is empty, ignoring command.")
-                else:
-                    logging.info("[AIBrain] pyperclip not installed.")
+        # Stage 2: Pure Speech-to-Text Polish (Wispr Flow style)
+        # Transcribes and polishes the user's spoken words directly.
+        final_text = self.polish(raw_text, style, context_info, formatting_instruction="", is_generative=False, pre_text=pre_text)
 
-            elif command.startswith("format_"):
-                logging.info(f"[AIBrain] Formatting command detected: {command}")
-                if command == "format_bullet_list":
-                    formatting_instruction = "Format the text as a clean Markdown bulleted list."
-                elif command == "format_numbered_list":
-                    formatting_instruction = "Format the text as a clean Markdown numbered list."
-                elif command == "format_capitalize":
-                    formatting_instruction = "Capitalize the text properly (Title Case or Sentence Case based on context)."
-                elif command == "format_translate":
-                    formatting_instruction = "Translate the transcribed text to perfectly fluent English."
-                
-                if remainder:
-                    raw_text = remainder
-            else:
-                logging.info(f"[AIBrain] Editing command detected: {command}")
-                return (raw_text, f"__CMD__{command}")
-
-        # Stage 2: Polish via Cloud Gemini or Local LLM
-        final_text = self.polish(raw_text, style, context_info, formatting_instruction, is_generative=is_generative, pre_text=pre_text)
         logging.info(f"[AIBrain] Polished text: {final_text}")
 
         return (raw_text, final_text)

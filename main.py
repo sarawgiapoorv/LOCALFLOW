@@ -25,7 +25,6 @@ REQUIRED_LIBS = [
     ("sounddevice", "sounddevice"),
     ("keyring", "keyring"),
     ("faster_whisper", "faster-whisper"),
-    ("noisereduce", "noisereduce"),
     ("wavio", "wavio"),
     ("pycaw", "pycaw"),
     ("comtypes", "comtypes"),
@@ -161,6 +160,63 @@ def sanitize_traceback(tb_str: str) -> str:
     return tb_str
 
 
+
+# ---------------------------------------------------------------------------
+# FreeLLMAPI lifecycle -- delegated to freellm_manager.py
+# ---------------------------------------------------------------------------
+# Import lazily inside functions so this module still loads even if
+# freellm_manager has a syntax error (defensive: won't crash LocalFlow).
+
+def _get_manager():
+    """Lazily import freellm_manager to avoid circular import at module load time."""
+    try:
+        import freellm_manager
+        return freellm_manager
+    except Exception as e:
+        print(f"[FreeLLMAPI] Could not load freellm_manager: {e}")
+        return None
+
+
+def locate_freellmapi_dir() -> str | None:
+    """Find the FreeLLMAPI directory. Delegates to freellm_manager."""
+    mgr = _get_manager()
+    return mgr.locate_freellmapi_dir() if mgr else None
+
+
+def is_freellmapi_running(timeout: float = 1.0) -> bool:
+    """Return True if FreeLLMAPI is currently accepting TCP connections."""
+    mgr = _get_manager()
+    return mgr.is_running() if mgr else False
+
+
+def ensure_freellmapi_running(poll_timeout: float = 8.0) -> bool:
+    """
+    Start FreeLLMAPI in the background without blocking the GUI.
+
+    Kicks off a daemon thread (start_async) that:
+      1. Fast-checks if the server is already up.
+      2. Discovers and spawns the npm process headlessly.
+      3. Polls TCP until ready or poll_timeout.
+      4. Registers an atexit cleanup automatically.
+
+    Always returns immediately so the GUI can continue loading.
+    """
+    mgr = _get_manager()
+    if mgr is None:
+        return False
+    mgr.start_async(poll_timeout=poll_timeout)
+    return True     # startup is in progress; actual readiness tracked by mgr.is_running()
+
+
+def terminate_freellmapi() -> None:
+    """Cleanly shut down the background FreeLLMAPI process tree."""
+    mgr = _get_manager()
+    if mgr:
+        mgr.shutdown()
+
+
+
+
 def main():
     # Elevate process priority to ABOVE_NORMAL to ensure low latency and responsiveness
     if sys.platform == "win32":
@@ -188,6 +244,9 @@ def main():
 
     start_silent = "--silent" in sys.argv
     try:
+        # Pre-start FreeLLMAPI proxy silently in the background
+        ensure_freellmapi_running()
+
         # Import the main GUI app dynamically now that dependencies are guaranteed
         from gui_app import LocalFlowApp
         app = LocalFlowApp(start_silent=start_silent)
@@ -223,6 +282,8 @@ def main():
             print(f"Failed to show GUI error message: {gui_err}")
             
         sys.exit(1)
+    finally:
+        terminate_freellmapi()
 
 
 if __name__ == "__main__":

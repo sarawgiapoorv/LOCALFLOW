@@ -10,12 +10,14 @@ Features:
 
 import os
 import sys
+import re
 import time
 import shutil
 import logging
 import threading
 import subprocess
 import requests
+
 
 OLLAMA_DEFAULT_HOST = "http://127.0.0.1:11434"
 DEFAULT_LOCAL_MODEL = "llama3.2:3b"
@@ -91,7 +93,7 @@ class LocalLLMEngine:
         except Exception:
             return False
 
-    def ensure_server_running(self, timeout_seconds: float = 6.0) -> bool:
+    def ensure_server_running(self, timeout_seconds: float = 15.0) -> bool:
         """Ensure Ollama is running. If not, auto-launch it in background without window."""
         if self.is_server_running():
             self._is_ready = True
@@ -239,39 +241,174 @@ class LocalLLMEngine:
 
     @staticmethod
     def _clean_model_output(text: str, raw_text: str = "") -> str:
-        """Strip surrounding quotes or rare conversational preamble from output."""
+        """
+        Strip model-introduced wrapping, conversational preambles, and assistant
+        suffixes from the raw output so only the clean dictation transcription remains.
+
+        Guards applied (in order):
+          1. Outer quote wrapper  (" ... " or ' ... ')
+          2. Markdown code-fence wrapper
+          3. Conversational preamble prefixes  (Sure!, Here is your text:, etc.)
+          4. Informational / explanation prefixes  (Here is the corrected text:, etc.)
+          5. Anti-chatbot refusal guard  (reroutes to safe raw transcription)
+          6. Trailing explanatory suffix guard  (strips '(Note: ...)' appended text)
+        """
         cleaned = text.strip()
-        # Remove single or double quote wrapper if model enclosed its whole response
-        if (cleaned.startswith('"') and cleaned.endswith('"')) or (cleaned.startswith("'") and cleaned.endswith("'")):
-            if len(cleaned) >= 2:
+
+        # ── 1. Outer quote wrapper ───────────────────────────────────────────
+        if len(cleaned) >= 2:
+            if (cleaned.startswith('"') and cleaned.endswith('"')) or \
+               (cleaned.startswith("'") and cleaned.endswith("'")):
                 cleaned = cleaned[1:-1].strip()
 
-        # Remove markdown code backticks if wrapped
+        # ── 2. Markdown code fence ───────────────────────────────────────────
         if cleaned.startswith("`") and cleaned.endswith("`"):
             cleaned = cleaned.strip("`").strip()
 
-        # Remove "Here is the corrected text:"-style prefixes if any leak through
         lower = cleaned.lower()
-        unwanted_prefixes = [
+
+        # ── 3. Conversational preamble prefixes (assistant chatter) ──────────
+        # These fire FIRST because they are single-word/short and must be stripped
+        # before the longer informational prefixes are checked.
+        conversational_preambles = [
+            "sure!",
+            "sure,",
+            "certainly!",
+            "certainly,",
+            "of course!",
+            "of course,",
+            "absolutely!",
+            "absolutely,",
+            "great!",
+            "great,",
+            "great question!",
+            "no problem!",
+            "happy to help!",
+            "got it!",
+            "understood!",
+            "noted!",
+        ]
+        for preamble in conversational_preambles:
+            if lower.startswith(preamble):
+                cleaned = cleaned[len(preamble):].lstrip(" ,!\n")
+                lower = cleaned.lower()
+                break  # only strip one preamble per call
+
+        # ── 3.5. Chain-of-thought / reasoning-leak guard ─────────────────────
+        # a. Strip labeled <think>...</think> or <reasoning>...</reasoning> blocks first
+        cleaned = re.sub(r'(?is)<(think|reasoning)>.*?(?:</\1>|\Z)', '', cleaned).strip()
+        lower = cleaned.lower()
+
+        # b. Detect unlabeled reasoning narration or excessive length
+        reasoning_markers = [
+            "the user wants",
+            "the user is dictating",
+            "the user is asking",
+            "the user asks",
+            "we need",
+            "let's apply",
+            "let's look",
+            "let me parse",
+            "i need to",
+            "okay, the user",
+        ]
+        start_sample = lower[:200]
+        raw_lower = raw_text.strip().lower()
+        has_reasoning_marker = any(
+            m in start_sample and not (m in ("i need to", "we need") and raw_lower.startswith(m))
+            for m in reasoning_markers
+        )
+        is_length_leak = bool(
+            raw_text
+            and len(cleaned) > 200
+            and len(cleaned) > 4 * len(raw_text.strip())
+        )
+
+        if has_reasoning_marker or is_length_leak:
+            # c. On a detected leak, first try to recover a clean final line near the end
+            # Pattern like Final (intended thought|answer|output|transcript): "..."
+            recovered = None
+
+            matches = list(re.finditer(
+                r'(?i)\bfinal\s+(?:intended\s+thought|answer|output|transcript|transcription|cleaned\s+version|version|phrase)\s*:\s*(?:(["\'])(.*?)\1|([^\r\n]+))',
+                cleaned
+            ))
+            if matches:
+                last = matches[-1]
+                # If quoted, group 2 is the content inside matching quotes
+                if last.group(2) is not None:
+                    cand = last.group(2).strip()
+                else:
+                    cand = last.group(3).strip()
+                    if len(cand) >= 2 and (
+                        (cand.startswith('"') and cand.endswith('"')) or
+                        (cand.startswith("'") and cand.endswith("'"))
+                    ):
+                        cand = cand[1:-1].strip()
+                    cand = cand.strip('"\'').strip()
+
+                if 0 < len(cand) < 300:
+                    recovered = cand
+
+
+            if recovered:
+                cleaned = recovered
+                lower = cleaned.lower()
+            else:
+                # d. No recoverable final line: DO NOT type reasoning text.
+                # Fall back to lightly-punctuated raw_text and log warning.
+                logging.warning(
+                    f"[LocalLLM] Reasoning leak detected and discarded ({len(cleaned)} chars). "
+                    "Falling back to lightly-punctuated raw text."
+                )
+                raw_fallback = raw_text.strip()
+                if raw_fallback:
+                    first_words = raw_fallback.lower().split()[:2]
+                    is_q = any(
+                        w in first_words
+                        for w in ["what", "how", "who", "where", "when", "why",
+                                  "can", "could", "is", "are", "does", "did", "will", "would"]
+                    )
+                    if is_q and not raw_fallback.endswith("?"):
+                        return raw_fallback + "?"
+                    if not raw_fallback.endswith((".", "!", "?")):
+                        return raw_fallback + "."
+                    return raw_fallback
+                return ""
+
+        # ── 4. Informational / explanation prefixes ──────────────────────────
+
+        informational_prefixes = [
             "here is the corrected text:",
             "here's the corrected text:",
-            "corrected text:",
-            "polished text:",
+            "here is the cleaned text:",
+            "here's the cleaned text:",
+            "here is the transcription:",
+            "here's the transcription:",
             "here is your text:",
+            "here's your text:",
+            "corrected text:",
+            "cleaned text:",
+            "polished text:",
+            "transcription:",
             "clean polished transcript:",
             "output:",
+            "result:",
         ]
-        for p in unwanted_prefixes:
+        for p in informational_prefixes:
             if lower.startswith(p):
-                cleaned = cleaned[len(p):].strip()
+                cleaned = cleaned[len(p):].lstrip(" \n")
                 lower = cleaned.lower()
                 break
 
-        # Anti-chatbot refusal guard: if the model slips into refusal mode
+        # ── 5. Anti-chatbot refusal guard ────────────────────────────────────
+        # If the model slips into refusal / assistant mode, recover by returning
+        # the raw dictation as a clean transcription.
         bot_refusal_prefixes = [
             "as an ai,",
             "as an ai language model",
             "as a language model",
+            "as a large language model",
             "i cannot",
             "i can't",
             "i am unable to",
@@ -280,11 +417,56 @@ class LocalLLMEngine:
             "i am not capable",
             "i don't have access",
             "i do not have access",
+            "i'm not able to",
+            "i am not able to",
+            "i'm sorry, but",
+            "i apologize, but",
         ]
-        if any(lower.startswith(bp) for bp in bot_refusal_prefixes) and raw_text:
+        if raw_text and any(lower.startswith(bp) for bp in bot_refusal_prefixes):
             first_words = raw_text.strip().lower().split()[:2]
-            is_q = any(w in first_words for w in ["what", "how", "who", "where", "when", "why", "can", "could", "is", "are"])
-            logging.warning(f"[LocalLLM] Guarded against assistant refusal '{cleaned}'. Transcribing raw text cleanly.")
-            return raw_text.strip() + ("?" if is_q and not raw_text.strip().endswith("?") else ".")
+            is_q = any(
+                w in first_words
+                for w in ["what", "how", "who", "where", "when", "why",
+                          "can", "could", "is", "are", "does", "did", "will"]
+            )
+            logging.warning(
+                f"[LocalLLM] Guarded against assistant refusal: {repr(cleaned[:60])}. "
+                "Returning safe transcription of raw text."
+            )
+            raw_stripped = raw_text.strip()
+            if is_q and not raw_stripped.endswith("?"):
+                return raw_stripped + "?"
+            if not raw_stripped.endswith((".", "!", "?")):
+                return raw_stripped + "."
+            return raw_stripped
+
+        # ── 6. Trailing explanatory suffix guard ─────────────────────────────
+        # Some models append "Note: ..." or "(As an AI, ...)" after the transcription.
+        # Strip everything from the first occurrence of these patterns onward.
+        trailing_patterns = [
+            "\n\nnote:",
+            "\nnote:",
+            "\n\n(note:",
+            "\n(as an ai",
+            "\n\n(as an ai",
+            "\n\nplease note",
+            "\nplease note",
+        ]
+        lower_full = cleaned.lower()
+        for pat in trailing_patterns:
+            idx = lower_full.find(pat)
+            if idx != -1:
+                cleaned = cleaned[:idx].strip()
+                lower_full = cleaned.lower()
+                break
+
+        # Re-strip quotes if outer quotes were wrapped around the body after preamble
+        cleaned = cleaned.strip()
+        if len(cleaned) >= 2:
+            if (cleaned.startswith('"') and cleaned.endswith('"')) or \
+               (cleaned.startswith("'") and cleaned.endswith("'")):
+                cleaned = cleaned[1:-1].strip()
 
         return cleaned
+
+

@@ -1280,10 +1280,17 @@ class LocalFlowApp(ctk.CTk):
                 self._tray_icon.stop()
             except Exception:
                 pass
+        # Shut down the background FreeLLMAPI Node process cleanly
+        try:
+            import freellm_manager
+            freellm_manager.shutdown()
+        except Exception:
+            pass
         try:
             self.destroy()
         except Exception:
             pass
+
 
     # ==================================================================
     #  BACKEND (runs in background threads)
@@ -1580,22 +1587,17 @@ class LocalFlowApp(ctk.CTk):
                 self._set_status("ready", "No speech detected.")
                 return
 
-            # Check for editing commands in raw text
+            # Optional: dynamic vocabulary addition if user explicitly said "add <word> to my dictionary"
             from ai_brain import detect_editing_command
             command, remainder = detect_editing_command(raw_text)
-            if command:
-                if command.startswith("dict_add_"):
-                    word_to_add = command[len("dict_add_"):]
-                    self.brain._add_to_dictionary(word_to_add)
-                    self._set_status("ready", f"Learned: '{word_to_add}' added to memory!")
-                else:
-                    self._set_status("typing", f"Executing: {command}")
-                    self._execute_editing_command(command)
-                    self._set_status("ready")
+            if command and command.startswith("dict_add_"):
+                word_to_add = command[len("dict_add_"):]
+                self.brain._add_to_dictionary(word_to_add)
+                self._set_status("ready", f"Learned: '{word_to_add}' added to memory!")
                 return
 
-            # 2. Stage 2: Polish speech first (Gemini Cloud or Local llama3.2:3b fallback)
-            # Never type raw unpolished speech to the user's screen.
+            # Stage 2: Pure Speech-to-Text Polish (Wispr Flow style)
+            # Never execute commands or keystrokes — ALWAYS convert spoken words into polished text.
             self._set_status("processing", "Polishing transcription...")
             pre_text = getattr(self, "_lookback_context", "")
             self._lookback_context = ""
@@ -1607,9 +1609,16 @@ class LocalFlowApp(ctk.CTk):
             polished_expanded = self.injector.expand_snippets(polished_text)
             normalized_polished = polished_expanded.strip().replace("\r\n", "\n")
 
-            # 3. Direct Injection: Type ONLY the polished, self-corrected text once
+            # Terminal Safety Guard: If user is focused on a terminal or command prompt,
+            # ensure no unprompted newlines are injected that could accidentally execute shell commands.
+            app_hint = context.get("app_hint", "") if context else ""
+            if any(term in app_hint.lower() for term in ["terminal", "cmd", "powershell", "bash", "wsl"]):
+                normalized_polished = normalized_polished.replace("\n", " ").strip()
+
+            # Direct Injection: Type the polished text at the cursor position
             self._set_status("typing", "Typing polished text...")
             self._last_injected_text = self.injector.inject(normalized_polished)
+
 
             # 4. Log final polished text to vault
             ts = self.vault.add_entry(normalized_polished, raw_text)

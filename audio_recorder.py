@@ -69,7 +69,7 @@ except ImportError:
 try:
     import noisereduce as nr
     HAS_NOISE_REDUCE = True
-except ImportError:
+except Exception:
     HAS_NOISE_REDUCE = False
 
 
